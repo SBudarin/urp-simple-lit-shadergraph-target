@@ -1,8 +1,25 @@
 {
-  "name": "com.zallist.universal-shadergraph-extensions",
+  "name": "urp-shadergraph-extensions",
+  "version": "2.1.1",
   "displayName": "Universal Simple Lit ShaderGraph Target",
-  "version": "2.1.0",
-  "documentationUrl": "https://github.com/Zallist/unity.zallist.universal-simple-lit-shadergraph-target",
-  "licensesUrl": "https://github.com/Zallist/unity.zallist.universal-simple-lit-shadergraph-target/blob/main/LICENSE",
-  "description": "This plugin simply adds a Simple Lit material (SubTarget) to the Universal target for Shader Graph"
+  "description": "This plugin simply adds a Simple Lit material (SubTarget) to the Universal target for Shader Graph",
+  "unity": "2022.1",
+  "unityRelease": "0b5",
+  "documentationUrl": "https://github.com/SBudarin/urp-simple-lit-shadergraph-target",
+  "changelogUrl": "https://github.com/SBudarin/urp-simple-lit-shadergraph-target/releases",
+  "licensesUrl": "https://github.com/SBudarin/urp-simple-lit-shadergraph-target/blob/main/LICENSE",
+  "dependencies": {
+    "com.unity.render-pipelines.universal": "13.0.0"
+  },
+  "keywords": [
+    "URP",
+    "Universal Render Pipeline",
+    "Shader Graph",
+    "Simple Lit"
+  ],
+  "author": {
+    "name": "Sergey Budarin",
+    "email": "unity@example.com",
+    "url": "https://github.com/SBudarin"
+  }
 }
