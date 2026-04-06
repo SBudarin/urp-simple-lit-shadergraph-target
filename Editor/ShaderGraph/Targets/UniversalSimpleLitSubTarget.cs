@@ -190,6 +190,17 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #endif
                 collector.AddFloatProperty(Property.SrcBlend, 1.0f);    // always set by material inspector, ok to have incorrect values here
                 collector.AddFloatProperty(Property.DstBlend, 0.0f);    // always set by material inspector, ok to have incorrect values here
+                // Set alpha blend defaults based on surface type
+                collector.AddFloatProperty(Property.SrcBlendAlpha, 1.0f);    // One - used for both opaque and transparent
+                if (target.surfaceType == SurfaceType.Opaque)
+                {
+                    collector.AddFloatProperty(Property.DstBlendAlpha, 0.0f);    // Zero for opaque
+                }
+                else
+                {
+                    collector.AddFloatProperty(Property.DstBlendAlpha, 10.0f);   // OneMinusSrcAlpha for transparent (always set by material inspector)
+                }
+
                 collector.AddToggleProperty(Property.ZWrite, (target.surfaceType == SurfaceType.Opaque));
                 collector.AddFloatProperty(Property.ZWriteControl, (float)target.zWriteControl);
                 collector.AddFloatProperty(Property.ZTest, (float)target.zTestMode);    // ztest mode is designed to directly pass as ztest
@@ -872,7 +883,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { CoreKeywordDescriptors.LightLayers },
                 { CoreKeywordDescriptors.DebugDisplay },
                 { CoreKeywordDescriptors.LightCookies },
-#if UNITY_2022_2_OR_NEWER
+#if UNITY_6000_1_OR_NEWER
+                { CoreKeywordDescriptors.ClusterLightLoop },
+#elif UNITY_2022_2_OR_NEWER
                 { CoreKeywordDescriptors.ForwardPlus },
 #else
                 { CoreKeywordDescriptors.ClusteredRendering },
