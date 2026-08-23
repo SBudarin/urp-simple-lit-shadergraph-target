@@ -9,7 +9,7 @@ If Unity ever implements the Simple Lit master node themselves, it should be an 
 * Go to Package Manager in Unity
 * Press the + in the top left
 * Choose ADD PACKAGE FROM GIT URL
-* Enter https://github.com/Zallist/unity-universal-shadergraph-extensions.git
+* Enter https://github.com/SBudarin/urp-simple-lit-shadergraph-target.git
 
 ## How to use
 Once it's been installed, it should simply be a matter of just making a Shader Graph (there's an option in the Asset Creation menu for SIMPLE LIT SHADERGRAPH, near LIT SHADERGRAPH) and choosing the Material "Simple Lit". Basically the same way you'd make a Lit or Unlit shadergraph, instead just choose Simple Lit.
