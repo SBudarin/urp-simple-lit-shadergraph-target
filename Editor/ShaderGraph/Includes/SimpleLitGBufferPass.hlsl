@@ -66,7 +66,11 @@ PackedVaryings vert(Attributes input)
     return packedOutput;
 }
 
+#if UNITY_VERSION >= 600010
+GBufferFragOutput frag(PackedVaryings packedInput)
+#else
 FragmentOutput frag(PackedVaryings packedInput)
+#endif
 {
     Varyings unpacked = UnpackVaryings(packedInput);
     UNITY_SETUP_INSTANCE_ID(unpacked);
@@ -132,9 +136,9 @@ FragmentOutput frag(PackedVaryings packedInput)
     surface.albedo              = surfaceDescription.BaseColor;
     surface.metallic            = 0.0; //saturate(metallic);
     surface.specular            = specular;
-    surface.smoothness          = saturate(surfaceDescription.Smoothness),
+    surface.smoothness          = saturate(surfaceDescription.Smoothness);
     surface.occlusion           = 1.0; //surfaceDescription.Occlusion,
-    surface.emission            = surfaceDescription.Emission,
+    surface.emission            = surfaceDescription.Emission;
     surface.alpha               = saturate(alpha);
     surface.normalTS            = normalTS;
     surface.clearCoatMask       = 0;
@@ -150,5 +154,9 @@ FragmentOutput frag(PackedVaryings packedInput)
     half4 color = half4(inputData.bakedGI * surface.albedo + surface.emission, surface.alpha);
 
     //return BRDFDataToGbuffer(brdfData, inputData, surfaceDescription.Smoothness, surfaceDescription.Emission + color, surfaceDescription.Occlusion);
+#if UNITY_VERSION >= 600010
+    return PackGBuffersSurfaceData(surface, inputData, color.rgb);
+#else
     return SurfaceDataToGbuffer(surface, inputData, color.rgb, kLightingSimpleLit);
+#endif
 }

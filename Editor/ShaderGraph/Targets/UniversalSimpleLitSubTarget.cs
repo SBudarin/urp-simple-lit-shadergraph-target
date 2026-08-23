@@ -933,7 +933,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             const string kShadows = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl";
             const string kMetaInput = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MetaInput.hlsl";
             const string kForwardPass = "Packages/com.sbudarin.universal-shadergraph-extensions/Editor/ShaderGraph/Includes/SimpleLitForwardPass.hlsl";
+#if UNITY_6000_1_OR_NEWER
+            const string kGBuffer = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/GBufferOutput.hlsl";
+#else
             const string kGBuffer = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityGBuffer.hlsl";
+#endif
             const string kSimpleLitGBufferPass = "Packages/com.sbudarin.universal-shadergraph-extensions/Editor/ShaderGraph/Includes/SimpleLitGBufferPass.hlsl";
             const string kLightingMetaPass = "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/LightingMetaPass.hlsl";
             // TODO : Replace 2D for Simple one
@@ -973,6 +977,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { kGBuffer, IncludeLocation.Postgraph },
                 //{ kPBRGBufferPass, IncludeLocation.Postgraph },
                 { kSimpleLitGBufferPass, IncludeLocation.Postgraph },
+#if UNITY_6000_1_OR_NEWER
+                { CoreIncludes.GBufferOutputFormat },
+#endif
             };
 
             public static readonly IncludeCollection Meta = new IncludeCollection
