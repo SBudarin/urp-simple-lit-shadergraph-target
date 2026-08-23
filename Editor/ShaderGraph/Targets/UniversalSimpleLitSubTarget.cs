@@ -977,9 +977,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { kGBuffer, IncludeLocation.Postgraph },
                 //{ kPBRGBufferPass, IncludeLocation.Postgraph },
                 { kSimpleLitGBufferPass, IncludeLocation.Postgraph },
-#if UNITY_6000_1_OR_NEWER
-                { CoreIncludes.GBufferOutputFormat },
-#endif
+                // Optional render-target format hints. This internal URP API is not available
+                // in every Unity 6.3 patch release, even when URP reports version 17.3.0.
+                //{ CoreIncludes.GBufferOutputFormat },
             };
 
             public static readonly IncludeCollection Meta = new IncludeCollection
