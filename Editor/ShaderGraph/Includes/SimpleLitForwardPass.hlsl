@@ -38,13 +38,8 @@ void InitializeInputData(Varyings input, SurfaceDescription surfaceDescription, 
 
     inputData.fogCoord = InitializeInputDataFog(float4(input.positionWS, 1.0), input.fogFactorAndVertexLight.x);
     inputData.vertexLighting = input.fogFactorAndVertexLight.yzw;
-#if defined(DYNAMICLIGHTMAP_ON)
-    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.dynamicLightmapUV.xy, input.sh, inputData.normalWS);
-#else
-    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.sh, inputData.normalWS);
-#endif
     inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
-    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+    // bakedGI / shadowMask are filled in by InitializeBakedGIData() below, after the surface is known.
 
     #if defined(DEBUG_DISPLAY)
     #if defined(DYNAMICLIGHTMAP_ON)
@@ -55,7 +50,34 @@ void InitializeInputData(Varyings input, SurfaceDescription surfaceDescription, 
     #else
     inputData.vertexSH = input.sh;
     #endif
+    #if defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;    // FIX: added, APV probe occlusion debug data
     #endif
+    #endif
+}
+
+// FIX: added. Mirrors URP's PBRForwardPass so lightmaps, Adaptive Probe Volumes and screen space
+// irradiance are all sampled the way the rest of URP does. The old code called SAMPLE_GI with the
+// legacy lightmap/SH signature unconditionally, which silently skipped APV entirely.
+void InitializeBakedGIData(Varyings input, inout InputData inputData)
+{
+#if defined(_SCREEN_SPACE_IRRADIANCE)
+    inputData.bakedGI = SAMPLE_GI(_ScreenSpaceIrradiance, input.positionCS.xy);
+#elif defined(DYNAMICLIGHTMAP_ON)
+    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.dynamicLightmapUV.xy, input.sh, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+#elif !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    inputData.bakedGI = SAMPLE_GI(input.sh,
+        GetAbsolutePositionWS(inputData.positionWS),
+        inputData.normalWS,
+        inputData.viewDirectionWS,
+        input.positionCS.xy,
+        input.probeOcclusion,
+        inputData.shadowMask);
+#else
+    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.sh, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+#endif
 }
 
 PackedVaryings vert(Attributes input)
@@ -72,7 +94,9 @@ void frag(
     PackedVaryings packedInput
     , out half4 outColor : SV_Target0
 #ifdef _WRITE_RENDERING_LAYERS
-    , out float4 outRenderingLayers : SV_Target1
+    // FIX: was float4. The rendering layers target is R8_UInt / R16_UInt / R32_UInt, and every URP pass
+    // declares this as a uint.
+    , out uint outRenderingLayers : SV_Target1
 #endif
 )
 #else
@@ -118,7 +142,6 @@ half4 frag(PackedVaryings packedInput) : SV_TARGET
     // TODO: Mip debug modes would require this, open question how to do this on ShaderGraph.
     //SETUP_DEBUG_TEXTURE_DATA(inputData, unpacked.texCoord1.xy, _MainTex);
 
-    //#ifdef _SPECULAR_SETUP
     #ifdef _SPECULAR_COLOR
         float3 specular = surfaceDescription.Specular;
     //    float metallic = 1;
@@ -152,6 +175,8 @@ half4 frag(PackedVaryings packedInput) : SV_TARGET
     ApplyDecalToSurfaceData(unpacked.positionCS, surface, inputData);
 #endif
 
+    InitializeBakedGIData(unpacked, inputData);
+
     half4 color = UniversalFragmentBlinnPhong(inputData, surface);
 
     color.rgb = MixFog(color.rgb, inputData.fogCoord);
@@ -162,8 +187,8 @@ half4 frag(PackedVaryings packedInput) : SV_TARGET
     outColor = color;
 
 #ifdef _WRITE_RENDERING_LAYERS
-    uint renderingLayers = GetMeshRenderingLayer();
-    outRenderingLayers = float4(EncodeMeshRenderingLayer(renderingLayers), 0, 0, 0);
+    // FIX: EncodeMeshRenderingLayer() takes no arguments in URP 17.x. Passing one did not compile.
+    outRenderingLayers = EncodeMeshRenderingLayer();
 #endif
 
 #else

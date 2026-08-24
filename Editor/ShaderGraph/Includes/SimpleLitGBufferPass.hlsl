@@ -37,13 +37,8 @@ void InitializeInputData(Varyings input, SurfaceDescription surfaceDescription, 
 
     inputData.fogCoord = InitializeInputDataFog(float4(input.positionWS, 1.0), input.fogFactorAndVertexLight.x);
     inputData.vertexLighting = input.fogFactorAndVertexLight.yzw;
-#if defined(DYNAMICLIGHTMAP_ON)
-    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.dynamicLightmapUV.xy, input.sh, inputData.normalWS);
-#else
-    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.sh, inputData.normalWS);
-#endif
     inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
-    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+    // bakedGI / shadowMask are filled in by InitializeBakedGIData() below, after the surface is known.
 
     #if defined(DEBUG_DISPLAY)
     #if defined(DYNAMICLIGHTMAP_ON)
@@ -54,7 +49,34 @@ void InitializeInputData(Varyings input, SurfaceDescription surfaceDescription, 
     #else
     inputData.vertexSH = input.sh;
     #endif
+    #if defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;    // FIX: added, APV probe occlusion debug data
     #endif
+    #endif
+}
+
+// FIX: added. Mirrors URP's PBRForwardPass so lightmaps, Adaptive Probe Volumes and screen space
+// irradiance are all sampled the way the rest of URP does. The old code called SAMPLE_GI with the
+// legacy lightmap/SH signature unconditionally, which silently skipped APV entirely.
+void InitializeBakedGIData(Varyings input, inout InputData inputData)
+{
+#if defined(_SCREEN_SPACE_IRRADIANCE)
+    inputData.bakedGI = SAMPLE_GI(_ScreenSpaceIrradiance, input.positionCS.xy);
+#elif defined(DYNAMICLIGHTMAP_ON)
+    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.dynamicLightmapUV.xy, input.sh, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+#elif !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    inputData.bakedGI = SAMPLE_GI(input.sh,
+        GetAbsolutePositionWS(inputData.positionWS),
+        inputData.normalWS,
+        inputData.viewDirectionWS,
+        input.positionCS.xy,
+        input.probeOcclusion,
+        inputData.shadowMask);
+#else
+    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.sh, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+#endif
 }
 
 PackedVaryings vert(Attributes input)
@@ -66,7 +88,11 @@ PackedVaryings vert(Attributes input)
     return packedOutput;
 }
 
-#if UNITY_VERSION >= 600010
+// FIX: was gated on UNITY_VERSION >= 600010, i.e. the Unity editor version, but the GBuffer output API
+// is a URP *package* change. Branch on the include guard of the file the sub-target actually included -
+// GBufferOutput.hlsl defines UNIVERSAL_GBUFFEROUTPUT_INCLUDED, and URP >= 17.3 reaches it through
+// UnityGBuffer.hlsl too. That makes this agree with URP no matter which Unity/URP pair is in use.
+#if defined(UNIVERSAL_GBUFFEROUTPUT_INCLUDED)
 GBufferFragOutput frag(PackedVaryings packedInput)
 #else
 FragmentOutput frag(PackedVaryings packedInput)
@@ -97,7 +123,6 @@ FragmentOutput frag(PackedVaryings packedInput)
     // TODO: Mip debug modes would require this, open question how to do this on ShaderGraph.
     //SETUP_DEBUG_TEXTURE_DATA(inputData, unpacked.uv, _MainTex);
 
-    //ifdef _SPECULAR_SETUP
     #ifdef _SPECULAR_COLOR
         float3 specular = surfaceDescription.Specular;
         //float metallic = 1;
@@ -148,13 +173,15 @@ FragmentOutput frag(PackedVaryings packedInput)
     surface.albedo = AlphaModulate(surface.albedo, surface.alpha);
 #endif
 
+    InitializeBakedGIData(unpacked, inputData);
+
     Light mainLight = GetMainLight(inputData.shadowCoord, inputData.positionWS, inputData.shadowMask);
     MixRealtimeAndBakedGI(mainLight, inputData.normalWS, inputData.bakedGI, inputData.shadowMask);
     //half3 color = GlobalIllumination(brdfData, inputData.bakedGI, surfaceDescription.Occlusion, inputData.positionWS, inputData.normalWS, inputData.viewDirectionWS);
     half4 color = half4(inputData.bakedGI * surface.albedo + surface.emission, surface.alpha);
 
     //return BRDFDataToGbuffer(brdfData, inputData, surfaceDescription.Smoothness, surfaceDescription.Emission + color, surfaceDescription.Occlusion);
-#if UNITY_VERSION >= 600010
+#if defined(UNIVERSAL_GBUFFEROUTPUT_INCLUDED)
     return PackGBuffersSurfaceData(surface, inputData, color.rgb);
 #else
     return SurfaceDataToGbuffer(surface, inputData, color.rgb, kLightingSimpleLit);

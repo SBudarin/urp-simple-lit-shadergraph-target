@@ -21,7 +21,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 {
     sealed class UniversalSimpleLitSubTarget : UniversalSubTarget/*, ILegacyTarget*/
     {
-        static readonly GUID kSourceCodeGuid = new GUID("d6c78107b64145745805d963de80cc28"); // UniversalSimpleLitSubTarget.cs
+        static readonly GUID kSourceCodeGuid = new GUID("7583995cf5c4cd243a9b7121aab455c3"); // UniversalSimpleLitSubTarget.cs
+        // NOTE: this MUST match Editor/ShaderGraph/Targets/UniversalSimpleLitSubTarget.cs.meta.
+        // If it does not, ShaderGraph never invalidates generated shaders when this file changes.
 
         // Should be in UniversalTarget
         public const string kSimpleLitMaterialTypeTag = "\"UniversalMaterialType\" = \"SimpleLit\"";
@@ -31,9 +33,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #elif UNITY_2022_1_OR_NEWER
         public override int latestVersion => 1;
 #endif
-
-        //[SerializeField]
-        static WorkflowMode m_WorkflowMode = WorkflowMode.Specular;
 
         [SerializeField]
         bool m_SpecularHighlights = false;
@@ -53,12 +52,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 
         // This should really be a dedicated ShaderID with relevant logic in ShaderUtils
         protected override ShaderID shaderID => ShaderID.Unknown;
-
-        public static WorkflowMode workflowMode
-        {
-            get => m_WorkflowMode;
-            //set => m_WorkflowMode = value;
-        }
 
         public bool specularHighlights
         {
@@ -118,7 +111,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 // (technically not necessary since we are always recreating the material from the shader each time,
                 // which will pull over the defaults from the shader definition)
                 // but if that ever changes, this will ensure the defaults are set
-                material.SetFloat(Property.SpecularWorkflowMode, (float)workflowMode);
                 material.SetFloat(SimpleLitProperty.SpecularHighlights, specularHighlights ? 1.0f : 0.0f);
                 material.SetFloat(Property.CastShadows, target.castShadows ? 1.0f : 0.0f);
                 material.SetFloat(Property.ReceiveShadows, target.receiveShadows ? 1.0f : 0.0f);
@@ -135,6 +127,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             // Control == 0 is automatic, 1 is user-specified render queue
             material.SetFloat(Property.QueueOffset, 0.0f);
             material.SetFloat(Property.QueueControl, (float)BaseShaderGUI.QueueControl.Auto);
+
+#if UNITY_6000_0_OR_NEWER
+            if (IsSpacewarpSupported())
+                material.SetFloat(Property.XrMotionVectorsPass, 1.0f);
+#endif
 
             // call the full unlit material setup function
             ShaderGraphSimpleLitGUI.UpdateMaterial(material, MaterialUpdateType.CreatedNewMaterial);
@@ -158,6 +155,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 
         public override void GetActiveBlocks(ref TargetActiveBlockContext context)
         {
+#if UNITY_6000_0_OR_NEWER
+            context.AddBlock(UniversalBlockFields.VertexDescription.MotionVector, target.additionalMotionVectorMode == AdditionalMotionVectorMode.Custom);
+#endif
             context.AddBlock(BlockFields.SurfaceDescription.Smoothness);
             context.AddBlock(BlockFields.SurfaceDescription.NormalOS, normalDropOffSpace == NormalDropOffSpace.Object);
             context.AddBlock(BlockFields.SurfaceDescription.NormalTS, normalDropOffSpace == NormalDropOffSpace.Tangent);
@@ -176,7 +176,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             // if using material control, add the material property to control workflow mode
             if (target.allowMaterialOverride)
             {
-                collector.AddFloatProperty(Property.SpecularWorkflowMode, (float)workflowMode);
                 collector.AddFloatProperty(SimpleLitProperty.SpecularHighlights, specularHighlights ? 1.0f : 0.0f);
                 collector.AddFloatProperty(Property.CastShadows, target.castShadows ? 1.0f : 0.0f);
                 collector.AddFloatProperty(Property.ReceiveShadows, target.receiveShadows ? 1.0f : 0.0f);
@@ -217,6 +216,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             // We initialize queue control to -1 to indicate to UpdateMaterial that it needs to initialize it properly on the material.
             collector.AddFloatProperty(Property.QueueOffset, 0.0f);
             collector.AddFloatProperty(Property.QueueControl, -1.0f);
+
+#if UNITY_6000_0_OR_NEWER
+            if (IsSpacewarpSupported())
+                collector.AddFloatProperty(Property.XrMotionVectorsPass, 1.0f);
+#endif
         }
 
         public override void GetPropertiesGUI(ref TargetPropertyGUIContext context, Action onChange, Action<String> registerUndo)
@@ -313,6 +317,10 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     customTags = kSimpleLitMaterialTypeTag,
                     renderType = renderType,
                     renderQueue = renderQueue,
+#if UNITY_6000_0_OR_NEWER
+                    // FIX: was never forwarded, so "Supports LOD Cross Fade" produced DisableBatching=False.
+                    disableBatchingTag = target.disableBatching,
+#endif
                     generatesPreview = true,
                     passes = new PassCollection()
                 };
@@ -331,6 +339,17 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 result.passes.Add(SimpleLitPasses.GBuffer(target, blendModePreserveSpecular, specularHighlights));
 #else
                 result.passes.Add(SimpleLitPasses.GBuffer(target, specularHighlights));
+#endif
+
+#if UNITY_6000_0_OR_NEWER
+                // FIX: the Simple Lit sub-target had no motion vector passes at all, so TAA, motion blur
+                // and Quest Application SpaceWarp got no motion vectors for these materials.
+                if (target.alwaysRenderMotionVectors)
+                    result.customTags = string.Concat(result.customTags, " ", UniversalTarget.kAlwaysRenderMotionVectorsTag);
+                result.passes.Add(PassVariant(CorePasses.MotionVectors(target), CorePragmas.MotionVectors));
+
+                if (IsSpacewarpSupported())
+                    result.passes.Add(PassVariant(CorePasses.XRMotionVectors(target), CorePragmas.XRMotionVectors));
 #endif
 
                 // cull the shadowcaster pass if we know it will never be used
@@ -416,6 +435,10 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     customTags = kSimpleLitMaterialTypeTag,
                     renderType = renderType,
                     renderQueue = renderQueue,
+#if UNITY_6000_0_OR_NEWER
+                    // FIX: was never forwarded, so "Supports LOD Cross Fade" produced DisableBatching=False.
+                    disableBatchingTag = target.disableBatching,
+#endif
                     generatesPreview = true,
                     passes = new PassCollection()
                 };
@@ -453,14 +476,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         #region Passes
         static class SimpleLitPasses
         {
-            static void AddWorkflowModeControlToPass(ref PassDescriptor pass, UniversalTarget target, WorkflowMode workflowMode)
-            {
-                //if (target.allowMaterialOverride)
-                //    pass.keywords.Add(LitDefines.SpecularSetup);
-                //else if (workflowMode == WorkflowMode.Specular)
-                pass.defines.Add(SimpleLitDefines.SpecularSetup, 1);
-            }
-
             static void AddSpecularHighlightsControlToPass(ref PassDescriptor pass, UniversalTarget target, bool specularHighlights)
             {
                 if (target.allowMaterialOverride)
@@ -538,7 +553,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #if UNITY_2022_2_OR_NEWER
                 CorePasses.AddAlphaToMaskControlToPass(ref result, target);
 #endif
-                AddWorkflowModeControlToPass(ref result, target, workflowMode);
                 AddSpecularHighlightsControlToPass(ref result, target, specularHighlights);
                 AddReceiveShadowsControlToPass(ref result, target, target.receiveShadows);
 #if UNITY_2022_2_OR_NEWER
@@ -604,7 +618,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #else
                 CorePasses.AddTargetSurfaceControlsToPass(ref result, target/*, blendModePreserveSpecular*/);
 #endif
-                AddWorkflowModeControlToPass(ref result, target, workflowMode);
                 AddSpecularHighlightsControlToPass(ref result, target, specularHighlights);
                 AddReceiveShadowsControlToPass(ref result, target, target.receiveShadows);
 #if UNITY_2022_2_OR_NEWER
@@ -657,6 +670,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 var result = new PassDescriptor()
                 {
                     // Definition
+                    displayName = "Universal 2D",   // FIX: was missing, so the generated pass had no Name tag
                     referenceName = "SHADERPASS_2D",
                     lightMode = "Universal2D",
 
@@ -696,7 +710,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     displayName = "DepthNormals",
                     referenceName = "SHADERPASS_DEPTHNORMALS",
                     lightMode = "DepthNormals",
-                    useInPreview = false,
+                    useInPreview = true,    // FIX: was false; URP's Lit sub-target uses true
 
                     // Template
                     passTemplatePath = UniversalTarget.kUberTemplatePath,
@@ -777,6 +791,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 UniversalStructFields.Varyings.staticLightmapUV,
                 UniversalStructFields.Varyings.dynamicLightmapUV,
                 UniversalStructFields.Varyings.sh,
+#if UNITY_6000_0_OR_NEWER
+                UniversalStructFields.Varyings.probeOcclusion,          // FIX: needed for APV probe occlusion
+#endif
                 UniversalStructFields.Varyings.fogFactorAndVertexLight, // fog and vertex lighting, vert input is dependency
                 UniversalStructFields.Varyings.shadowCoord,             // shadow coord, vert input is dependency
             };
@@ -791,6 +808,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 UniversalStructFields.Varyings.staticLightmapUV,
                 UniversalStructFields.Varyings.dynamicLightmapUV,
                 UniversalStructFields.Varyings.sh,
+#if UNITY_6000_0_OR_NEWER
+                UniversalStructFields.Varyings.probeOcclusion,          // FIX: needed for APV probe occlusion
+#endif
                 UniversalStructFields.Varyings.fogFactorAndVertexLight, // fog and vertex lighting, vert input is dependency
                 UniversalStructFields.Varyings.shadowCoord,             // shadow coord, vert input is dependency
             };
@@ -814,16 +834,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         #region Defines
         static class SimpleLitDefines
         {
-            public static readonly KeywordDescriptor SpecularSetup = new KeywordDescriptor()
-            {
-                displayName = "Specular Setup",
-                referenceName = "_SPECULAR_SETUP",
-                type = KeywordType.Boolean,
-                definition = KeywordDefinition.ShaderFeature,
-                scope = KeywordScope.Local,
-                stages = KeywordShaderStage.Fragment
-            };
-
             public static readonly KeywordDescriptor SpecularColor = new KeywordDescriptor()
             {
                 displayName = "Specular Color",
@@ -871,6 +881,15 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { CoreKeywordDescriptors.StaticLightmap },
                 { CoreKeywordDescriptors.DynamicLightmap },
                 { CoreKeywordDescriptors.DirectionalLightmapCombined },
+#if UNITY_6000_0_OR_NEWER
+                // FIX: URP 17 features that were silently inactive on this sub-target.
+                { CoreKeywordDescriptors.ScreenSpaceIrradiance },
+                { CoreKeywordDescriptors.UseLegacyLightmaps },
+                { CoreKeywordDescriptors.LightmapBicubicSampling },
+                { CoreKeywordDescriptors.ReflectionProbeRotation },
+                { CoreKeywordDescriptors.ReflectionProbeAtlas },
+                { CoreKeywordDescriptors.EvaluateSh },
+#endif
                 { CoreKeywordDescriptors.MainLightShadows },
                 { CoreKeywordDescriptors.AdditionalLights },
                 { CoreKeywordDescriptors.AdditionalLightShadows },
@@ -883,7 +902,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { CoreKeywordDescriptors.LightLayers },
                 { CoreKeywordDescriptors.DebugDisplay },
                 { CoreKeywordDescriptors.LightCookies },
-#if UNITY_6000_1_OR_NEWER
+// FIX: this boundary was UNITY_6000_1_OR_NEWER, but ForwardPlus was already renamed to
+                // ClusterLightLoop in URP 17.0, which ships with Unity 6000.0. On Unity 6000.0 the old
+                // boundary selected CoreKeywordDescriptors.ForwardPlus, a member that no longer exists there,
+                // which is a compile error rather than a rendering difference.
+#if UNITY_6000_0_OR_NEWER
                 { CoreKeywordDescriptors.ClusterLightLoop },
 #elif UNITY_2022_2_OR_NEWER
                 { CoreKeywordDescriptors.ForwardPlus },
@@ -906,6 +929,17 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { CoreKeywordDescriptors.StaticLightmap },
                 { CoreKeywordDescriptors.DynamicLightmap },
                 { CoreKeywordDescriptors.DirectionalLightmapCombined },
+#if UNITY_6000_0_OR_NEWER
+                // FIX: ShadowsShadowmask drives GBUFFER_FEATURE_SHADOWMASK in GBufferCommon.hlsl, which decides
+                // how many render targets GBufferFragOutput declares. Without it the generated output struct can
+                // disagree with what URP deferred actually binds.
+                { CoreKeywordDescriptors.ShadowsShadowmask },
+                { CoreKeywordDescriptors.ClusterLightLoop },
+                { CoreKeywordDescriptors.ScreenSpaceIrradiance },
+                { CoreKeywordDescriptors.UseLegacyLightmaps },
+                { CoreKeywordDescriptors.LightmapBicubicSampling },
+                { CoreKeywordDescriptors.ReflectionProbeRotation },
+#endif
                 { CoreKeywordDescriptors.MainLightShadows },
                 { CoreKeywordDescriptors.ReflectionProbeBlending },
                 { CoreKeywordDescriptors.ReflectionProbeBoxProjection },
@@ -933,14 +967,24 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             const string kShadows = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl";
             const string kMetaInput = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/MetaInput.hlsl";
             const string kForwardPass = "Packages/com.sbudarin.universal-shadergraph-extensions/Editor/ShaderGraph/Includes/SimpleLitForwardPass.hlsl";
-#if UNITY_6000_1_OR_NEWER
-            const string kGBuffer = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/GBufferOutput.hlsl";
-#else
-            const string kGBuffer = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityGBuffer.hlsl";
-#endif
+
+            // FIX: the GBuffer output API moved from UnityGBuffer.hlsl to GBufferOutput.hlsl. That is a URP
+            // *package* change, so gating it on the Unity editor version (UNITY_6000_1_OR_NEWER) mis-branches on
+            // any Unity/URP combination that is not 1:1. Ask the asset database which file actually exists.
+            // The HLSL side branches on the UNIVERSAL_GBUFFEROUTPUT_INCLUDED include guard, so the two agree
+            // whichever file gets picked here.
+            const string kGBufferOutput = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/GBufferOutput.hlsl";
+            const string kGBufferLegacy = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityGBuffer.hlsl";
+            const string kGBufferOutputFormat = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/GBufferOutputFormat.hlsl";
+
+            static bool UrpFileExists(string assetPath) =>
+                !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(assetPath));
+
+            static readonly string kGBuffer = UrpFileExists(kGBufferOutput) ? kGBufferOutput : kGBufferLegacy;
             const string kSimpleLitGBufferPass = "Packages/com.sbudarin.universal-shadergraph-extensions/Editor/ShaderGraph/Includes/SimpleLitGBufferPass.hlsl";
             const string kLightingMetaPass = "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/LightingMetaPass.hlsl";
-            // TODO : Replace 2D for Simple one
+            // Shared with the Lit sub-target on purpose: PBR2DPass only outputs BaseColor and Alpha,
+            // so there is nothing PBR-specific in it for Simple Lit to replace.
             const string k2DPass = "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/PBR2DPass.hlsl";
 
             public static readonly IncludeCollection Forward = new IncludeCollection
@@ -949,6 +993,13 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 #if UNITY_2022_2_15_OR_NEWER
                 { CoreIncludes.DOTSPregraph },
                 { CoreIncludes.WriteRenderLayersPregraph },
+#endif
+#if UNITY_6000_0_OR_NEWER
+                // FIX: FogPregraph is what declares the FOG_* keywords. Without it the pass still #defines
+                // _FOG_FRAGMENT and calls MixFog(), but no fog variant is ever compiled, so fog does nothing.
+                { CoreIncludes.FogPregraph },
+                // FIX: declares PROBE_VOLUMES_L1/L2 so Adaptive Probe Volumes work.
+                { CoreIncludes.ProbeVolumePregraph },
 #endif
                 { CoreIncludes.CorePregraph },
                 { kShadows, IncludeLocation.Pregraph },
@@ -960,27 +1011,40 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 { kForwardPass, IncludeLocation.Postgraph },
             };
 
-            public static readonly IncludeCollection GBuffer = new IncludeCollection
-            {
-                // Pre-graph
-#if UNITY_2022_2_15_OR_NEWER
-                { CoreIncludes.DOTSPregraph },
-                { CoreIncludes.WriteRenderLayersPregraph },
-#endif
-                { CoreIncludes.CorePregraph },
-                { kShadows, IncludeLocation.Pregraph },
-                { CoreIncludes.ShaderGraphPregraph },
-                { CoreIncludes.DBufferPregraph },
+            public static readonly IncludeCollection GBuffer = BuildGBufferIncludes();
 
-                // Post-graph
-                { CoreIncludes.CorePostgraph },
-                { kGBuffer, IncludeLocation.Postgraph },
-                //{ kPBRGBufferPass, IncludeLocation.Postgraph },
-                { kSimpleLitGBufferPass, IncludeLocation.Postgraph },
-                // Optional render-target format hints. This internal URP API is not available
-                // in every Unity 6.3 patch release, even when URP reports version 17.3.0.
-                //{ CoreIncludes.GBufferOutputFormat },
-            };
+            static IncludeCollection BuildGBufferIncludes()
+            {
+                var includes = new IncludeCollection
+                {
+                    // Pre-graph
+#if UNITY_2022_2_15_OR_NEWER
+                    { CoreIncludes.DOTSPregraph },
+                    { CoreIncludes.WriteRenderLayersPregraph },
+#endif
+#if UNITY_6000_0_OR_NEWER
+                    { CoreIncludes.FogPregraph },
+                    { CoreIncludes.ProbeVolumePregraph },
+#endif
+                    { CoreIncludes.CorePregraph },
+                    { kShadows, IncludeLocation.Pregraph },
+                    { CoreIncludes.ShaderGraphPregraph },
+                    { CoreIncludes.DBufferPregraph },
+
+                    // Post-graph
+                    { CoreIncludes.CorePostgraph },
+                    { kGBuffer, IncludeLocation.Postgraph },
+                    { kSimpleLitGBufferPass, IncludeLocation.Postgraph },
+                };
+
+                // FIX: the rendertarget_format_hint pragmas were commented out. They are re-enabled here, but
+                // referenced by path and guarded by an existence check, so a URP release that does not ship the
+                // file simply skips the hints instead of failing to compile.
+                if (UrpFileExists(kGBufferOutputFormat))
+                    includes.Add(kGBufferOutputFormat, IncludeLocation.Postgraph, true);
+
+                return includes;
+            }
 
             public static readonly IncludeCollection Meta = new IncludeCollection
             {
